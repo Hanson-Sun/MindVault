@@ -1,0 +1,15 @@
+--find-links https://download.pytorch.org/whl/torch_stable.html
+wheel
+tqdm
+numpy
+scikit-learn 
+pathspec
+unstructured
+sentence-transformers
+pypdf
+langchain
+langchain_community
+faiss-gpu
+markdown
+flask
+torch==2.2.0+cu121

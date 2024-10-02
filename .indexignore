@@ -1,0 +1,6 @@
+*.db
+__pycache__
+.venv
+SQLite-trunk
+sqlite-vss
+libs

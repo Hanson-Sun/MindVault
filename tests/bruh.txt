@@ -1,0 +1,74 @@
+    c = conn.cursor()
+
+    total_files = count_files(directory_path)
+    progress_bar = tqdm(total=total_files, desc=f"Indexing directory with {total_files} files")
+
+    ignore_spec = load_index_ignore(os.path.join(directory_path, ".indexignore"))
+
+    # Create a bare repository for tracking changes
+    # repo_path = os.path.join(directory_path, '.index_repo')
+    changed_files = []
+    repo_path = os.path.join(directory_path, '.git')
+    if not os.path.exists(repo_path):
+        repo = pygit2.init_repository(repo_path, bare=False)
+        os.chdir(directory_path)
+        repo.index.add_all()
+        repo.index.write()
+        for entry in repo.index:
+            print(entry.path)
+        changed_files = [entry.path for entry in repo.index if not is_ignored(entry.path, ignore_spec)]
+        print(changed_files)
+    else:
+        repo = pygit2.Repository(repo_path)
+        os.chdir(directory_path)
+        changed_files = [d.new_file.path for d in repo.index.diff_to_workdir().deltas if not is_ignored(d.new_file.path, ignore_spec)]
+
+    print(changed_files)
+
+    # Get the current index
+    index = repo.index
+    
+    print(changed_files)
+
+    for file_path in changed_files:
+        current_mode_time = os.path.getmtime(file_path)
+        c.execute("SELECT mod_time FROM content_table WHERE file_path = ?", (file_path,))
+        result = c.fetchone()
+        if (result and current_mode_time - result[0] > 0.01):
+            tqdm.write(f"File {file_path} has been modified. Reindexing...")
+            deleteFile(conn, file_path)
+            indexFile(conn, file_path)
+        elif (not result):
+            tqdm.write(f"File {file_path} is not indexed. Indexing...")
+            indexFile(conn, file_path)
+        else:
+            tqdm.write(f"File {file_path} is already indexed. Skipping...")
+
+        progress_bar.update()
+
+    progress_bar.close()
+
+    # Commit the changes
+    index.write()
+    tree = index.write_tree()
+    author = pygit2.Signature("name", "email")
+    committer = pygit2.Signature("name", "email")
+    try:
+        parent = [repo.head.peel().hex]
+    except pygit2.GitError:  # The repository is empty
+        parent = []
+
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    commit_message = f"Update database index at {current_time}"
+    repo.create_commit('HEAD', author, committer, commit_message, tree, parent)
+
+    tqdm.write("Checking file existences...")
+    # Get a list of deleted files
+    deleted_files = [d.old_file.path for d in index.diff_to_workdir().deltas if d.status == pygit2.GIT_DELTA_DELETED]
+
+    for file_path in tqdm(deleted_files, desc="Checking file existence"):
+        c.execute("SELECT file_path FROM content_table WHERE file_path = ?", (file_path,))
+        result = c.fetchone()
+        if result:
+            tqdm.write(f"File {file_path} does not exist in the file system. Deleting...")
+            deleteFile(conn, file_path)
